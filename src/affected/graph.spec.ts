@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -34,6 +35,7 @@ const chosen = (selection: Selection): string[] =>
 
 beforeEach(() => {
   root = mkdtempSync(join(tmpdir(), 'affected-'))
+  execFileSync('git', ['init', '--quiet'], { cwd: root })
   layout = {
     target: join(root, 'target'),
     repository: root,
@@ -148,6 +150,24 @@ describe('what a spec reaches', () => {
         ])
       )
     ).toEqual([])
+  })
+
+  it('reads no file git ignores inside a Worker, such as its build output', () => {
+    write('.gitignore', 'dist/\n')
+    // A build may rewrite its output while the selection reads, or leave what no parser reads.
+    write('workers/door/dist/chunk.js', 'this is not JavaScript\n')
+    expect(
+      chosen(selectSpecs(graphOf(layout), ['workers/door/src/index.ts']))
+    ).toEqual(['src/scenarios/intake.integration.spec.ts'])
+  })
+
+  it('reaches nothing through a file deleted but not yet committed', () => {
+    write('workers/door/src/gone.ts', 'export const gone = 1\n')
+    execFileSync('git', ['add', '.'], { cwd: root })
+    rmSync(join(root, 'target/workers/door/src/gone.ts'))
+    expect(
+      chosen(selectSpecs(graphOf(layout), ['workers/door/src/index.ts']))
+    ).toEqual(['src/scenarios/intake.integration.spec.ts'])
   })
 
   it('does not reach tests, stories and docs inside a Worker', () => {

@@ -10,6 +10,7 @@
  * Paths are relative to the target, and a path that starts with `/` is
  * relative to the repository.
  */
+import { execFileSync } from 'node:child_process'
 import { existsSync, globSync, readFileSync, statSync } from 'node:fs'
 import { dirname, join, relative, resolve } from 'node:path'
 
@@ -112,8 +113,17 @@ const fileAt = (base: string): string | undefined =>
     .map((suffix) => base + suffix)
     .find((path) => existsSync(path) && statSync(path).isFile())
 
-const requestsOf = (file: string): string[] => {
-  const text = readFileSync(file, 'utf8')
+/** The text of a file, or `undefined` once it is gone, as a build or a branch may delete it while the selection reads. */
+const textOf = (file: string): string | undefined => {
+  try {
+    return readFileSync(file, 'utf8')
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined
+    throw error
+  }
+}
+
+const requestsOf = (file: string, text: string): string[] => {
   const { module } = parse(file, text)
   return [
     ...module.staticImports.map((entry) => entry.moduleRequest.value),
@@ -174,10 +184,15 @@ const importedFrom = (layout: Layout, starts: readonly string[]): Imports => {
   for (let file = queue.pop(); file !== undefined; file = queue.pop()) {
     if (seen.has(file)) continue
     seen.add(file)
-    files.add(pathIn(layout, file))
     // A JSON or CSS file is reached, but imports nothing itself.
-    if (!/\.[cm]?[jt]sx?$/.test(file)) continue
-    for (const imported of requestsOf(file)) {
+    if (!/\.[cm]?[jt]sx?$/.test(file)) {
+      files.add(pathIn(layout, file))
+      continue
+    }
+    const text = textOf(file)
+    if (text === undefined) continue
+    files.add(pathIn(layout, file))
+    for (const imported of requestsOf(file, text)) {
       // Vite's queries, such as ?raw, ask for the same file in another form.
       const request = imported.replace(/\?.*$/, '')
       const workspace = layout.packages.get(packageNameOf(request))
@@ -256,15 +271,35 @@ export const specsIn = (layout: Layout): string[] =>
     exclude: (path) => /(^|\/)node_modules(\/|$)/.test(path),
   }).sort()
 
+/*
+ * The code under one of a process's sources, as git sees it: tracked and new
+ * files, less what git ignores, such as `node_modules` and build output. A
+ * build that rewrites its output while the selection reads would otherwise
+ * take files from under it, and its output is no code anyone changes.
+ */
+const codeUnder = (layout: Layout, source: string): string[] =>
+  execFileSync(
+    'git',
+    [
+      'ls-files',
+      '-z',
+      '--cached',
+      '--others',
+      '--exclude-standard',
+      '--',
+      source,
+    ],
+    { cwd: layout.target, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }
+  )
+    .split('\0')
+    .filter((path) => /\.(ts|tsx|js|mjs)$/.test(path))
+
 export const graphOf = (layout: Layout): Graph => {
   const sourcesImports = new Map<string, Imports>()
   const importsUnder = (source: string): Imports => {
     const known = sourcesImports.get(source)
     if (known !== undefined) return known
-    const files = globSync(`${source}/**/*.{ts,tsx,js,mjs}`, {
-      cwd: layout.target,
-      exclude: (path) => /(^|\/)node_modules(\/|$)/.test(path),
-    })
+    const files = codeUnder(layout, source)
       .filter(isRuntime)
       .map((path) => join(layout.target, path))
     const found = importedFrom(layout, files)

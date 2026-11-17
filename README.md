@@ -262,6 +262,7 @@ It reads each fact where it already lives, so nothing is kept by hand:
 
 - The processes a spec starts are the ones its single `startTestEnvironment` call does not leave out, so `without` must be a written-out list of names.
 - A process reaches the directories its `sources` name, and every file their code imports, following relative imports and the `paths` of the nearest `tsconfig.json`.
+  Their code is what git sees there, tracked or new, so nothing git ignores is read, such as `node_modules` or a build's output, which a build running alongside may rewrite.
 - A spec reaches every file it imports, also one imported with a query such as Vite's `?raw`, and a workspace package it imports, by the name its `package.json` gives it, as a whole.
 - A shared path runs every spec.
   The target's are `dev-env.ts`, `compose.yaml`, `compose.test.yaml`, `package.json`, `tsconfig.json`, `tsconfig.*.json` and `vitest.integration.ts`.
@@ -273,6 +274,7 @@ It reads each fact where it already lives, so nothing is kept by hand:
 Bindings between processes are not followed: in a test environment a process answers only when the spec starts it.
 
 `@evandam93/dev-env/affected` exports the same selection, `layoutOf`, `graphOf`, `selectSpecs` and `forPullRequest`, for a test that pins which specs a change chooses.
+`graphOf` reads the target from git, so it runs inside a git checkout.
 
 ## What it does not do
 
