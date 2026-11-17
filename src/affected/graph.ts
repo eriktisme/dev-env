@@ -177,7 +177,9 @@ const importedFrom = (layout: Layout, starts: readonly string[]): Imports => {
     files.add(pathIn(layout, file))
     // A JSON or CSS file is reached, but imports nothing itself.
     if (!/\.[cm]?[jt]sx?$/.test(file)) continue
-    for (const request of requestsOf(file)) {
+    for (const imported of requestsOf(file)) {
+      // Vite's queries, such as ?raw, ask for the same file in another form.
+      const request = imported.replace(/\?.*$/, '')
       const workspace = layout.packages.get(packageNameOf(request))
       if (workspace !== undefined) packages.add(workspace)
       const candidates = request.startsWith('.')
