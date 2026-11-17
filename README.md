@@ -262,7 +262,7 @@ It reads each fact where it already lives, so nothing is kept by hand:
 
 - The processes a spec starts are the ones its single `startTestEnvironment` call does not leave out, so `without` must be a written-out list of names.
 - A process reaches the directories its `sources` name, and every file their code imports, following relative imports and the `paths` of the nearest `tsconfig.json`.
-- A spec reaches every file it imports, and a workspace package it imports, by the name its `package.json` gives it, as a whole.
+- A spec reaches every file it imports, also one imported with a query such as Vite's `?raw`, and a workspace package it imports, by the name its `package.json` gives it, as a whole.
 - A shared path runs every spec.
   The target's are `dev-env.ts`, `compose.yaml`, `compose.test.yaml`, `package.json`, `tsconfig.json`, `tsconfig.*.json` and `vitest.integration.ts`.
   The repository's are its root `package.json`, `tsconfig.json`, `.nvmrc`, `.node-version`, and its package manager's lockfile and configuration, such as `pnpm-workspace.yaml` or `.yarnrc.yml`.

@@ -128,6 +128,17 @@ describe('what a spec reaches', () => {
     ).toEqual(['src/scenarios/intake.integration.spec.ts'])
   })
 
+  it("reaches a file the spec imports with a query, such as Vite's ?raw", () => {
+    write('samples/send-event.sh', 'curl https://example.com\n')
+    write(
+      'src/scenarios/samples.integration.spec.ts',
+      "import sample from '../../samples/send-event.sh?raw'\nstartTestEnvironment('x', { without: ['door', 'intake', 'web'] })\n"
+    )
+    expect(
+      chosen(selectSpecs(graphOf(layout), ['samples/send-event.sh']))
+    ).toEqual(['src/scenarios/samples.integration.spec.ts'])
+  })
+
   it('does not reach a Worker the spec leaves out, its packages, or through a binding to it', () => {
     expect(
       chosen(
