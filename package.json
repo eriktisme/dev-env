@@ -1,0 +1,77 @@
+{
+  "name": "@evandam93/dev-env",
+  "version": "0.1.0",
+  "description": "One development environment per checkout and target, from a manifest beside your code, so worktrees run side by side with no ports pinned anywhere.",
+  "keywords": [
+    "development-environment",
+    "docker-compose",
+    "integration-tests",
+    "ports",
+    "vitest",
+    "worktree"
+  ],
+  "homepage": "https://github.com/eriktisme/dev-env#readme",
+  "bugs": {
+    "url": "https://github.com/eriktisme/dev-env/issues"
+  },
+  "license": "MIT",
+  "author": "Erik van Dam",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/eriktisme/dev-env.git"
+  },
+  "bin": {
+    "dev-env": "./bin/dev-env.js"
+  },
+  "files": [
+    "bin",
+    "dist"
+  ],
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./affected": {
+      "types": "./dist/affected/index.d.ts",
+      "default": "./dist/affected/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "changeset": "changeset",
+    "format": "oxfmt",
+    "format:check": "oxfmt --check",
+    "lint": "oxlint .",
+    "prepare": "tsc -p tsconfig.build.json",
+    "release": "npm run build && changeset publish",
+    "tests": "vitest run --config vitest.unit.ts",
+    "tests:integration": "tsc -p tsconfig.build.json && vitest run --config vitest.integration.ts",
+    "type-check": "tsc --noEmit",
+    "version-packages": "changeset version && oxfmt CHANGELOG.md"
+  },
+  "dependencies": {
+    "get-tsconfig": "^4.14.3",
+    "oxc-parser": "^0.127.0",
+    "tsx": "^4.23.15",
+    "yaml": "^2.9.1"
+  },
+  "devDependencies": {
+    "@changesets/changelog-github": "^1.0.1",
+    "@changesets/cli": "^3.0.3",
+    "@types/node": "^24.0.0",
+    "oxfmt": "0.76.0",
+    "oxlint": "1.91.0",
+    "oxlint-tsgolint": "7.0.2005",
+    "typescript": "7.0.2",
+    "vitest": "5.1.0"
+  },
+  "engines": {
+    "node": ">=22.17"
+  }
+}

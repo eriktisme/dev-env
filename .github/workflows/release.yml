@@ -1,0 +1,45 @@
+name: Release
+
+on:
+  push:
+    branches: [master]
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  pull-requests: write
+  # npm trusted publishing exchanges this token for a short-lived publish token, and signs provenance with it.
+  id-token: write
+
+jobs:
+  release:
+    name: Version or publish
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          registry-url: https://registry.npmjs.org
+      # Trusted publishing needs npm 11.5.1 or later.
+      - run: npm install --global npm@latest
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run type-check
+      - run: npm run tests
+      # With changesets pending, this opens or updates the version pull request; once that is merged, it publishes.
+      - uses: changesets/action@v2
+        with:
+          version-script: npm run version-packages
+          publish-script: npm run release
+          pr-title: 'chore(release): version packages'
+          commit-message: 'chore(release): version packages'
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+        env:
+          NPM_CONFIG_PROVENANCE: 'true'
+          # Only needed until trusted publishing is set up on npmjs.com; leave the secret unset afterwards.
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
