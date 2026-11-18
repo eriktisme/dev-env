@@ -1,5 +1,11 @@
 # @evandam93/dev-env
 
+## 0.1.2
+
+### Patch Changes
+
+- [#3](https://github.com/eriktisme/dev-env/pull/3) [`6e768ee`](https://github.com/eriktisme/dev-env/commit/6e768eeeeccb416714206fd4833bfdde2a864df3) Thanks [@eriktisme](https://github.com/eriktisme)! - `dev-env affected` and `graphOf` now read only the code git sees under a process's `sources`, tracked or new, and skip what git ignores, such as build output. Before, a build that rewrote its output while the selection read it could fail the selection with ENOENT, and a file deleted while it ran is now read as reaching nothing.
+
 ## 0.1.1
 
 ### Patch Changes
