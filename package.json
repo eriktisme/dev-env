@@ -1,6 +1,6 @@
 {
   "name": "@evandam93/dev-env",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "description": "One development environment per checkout and target, from a manifest beside your code, so worktrees run side by side with no ports pinned anywhere.",
   "keywords": [
     "development-environment",
