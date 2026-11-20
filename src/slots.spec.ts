@@ -113,6 +113,19 @@ describe('taking a lane slot', () => {
     expect(readdirSync(directory)).toEqual(['slot-0.json'])
   })
 
+  it('gives up after its time, saying who holds the slots', async () => {
+    const directory = pool()
+    const [one, two] = await Promise.all(['one', 'two'].map(holder))
+    if (one === undefined || two === undefined) throw new Error('no holders')
+    await takeSlot({ directory, size: 1, holder: one })
+
+    await expect(
+      takeSlot({ directory, size: 1, holder: two, timeoutMs: 500 })
+    ).rejects.toThrow(
+      `No lane slot came free in 0.5 seconds: all 1 lane slots are held by one (pid ${one.pid})`
+    )
+  })
+
   it('frees the slot of a holder that was killed', async () => {
     const directory = pool()
     const [killed, next] = await Promise.all(['killed', 'next'].map(holder))
@@ -166,6 +179,61 @@ describe('running alone', { timeout: 30_000 }, () => {
 
     releaseSlots(directory, alone)
     expect(await takes(queued)).toBe(true)
+  })
+
+  /*
+   * A file takes its slot in the setup file and asks again when it starts its
+   * environment, so the holder waiting to run alone is already waiting for it.
+   */
+  it('lets a file that holds a slot ask again while another waits to run alone', async () => {
+    const directory = pool()
+    const [running, alone] = await Promise.all(['running', 'alone'].map(holder))
+    if (running === undefined || alone === undefined)
+      throw new Error('no holders')
+    await takeSlot({ directory, size: 2, holder: running })
+    const exclusive = takeSlot({
+      directory,
+      size: 2,
+      holder: alone,
+      exclusive: true,
+    })
+    expect(await settles(exclusive)).toBe(false)
+
+    expect(await takes(takeSlot({ directory, size: 2, holder: running }))).toBe(
+      true
+    )
+  })
+
+  it('lets two that hold a slot and then both want every slot take turns', async () => {
+    const directory = pool()
+    const [first, second] = await Promise.all(['first', 'second'].map(holder))
+    if (first === undefined || second === undefined)
+      throw new Error('no holders')
+    await takeSlot({ directory, size: 2, holder: first })
+    await takeSlot({ directory, size: 2, holder: second })
+
+    const firstAlone = takeSlot({
+      directory,
+      size: 2,
+      holder: first,
+      exclusive: true,
+    })
+    const secondAlone = takeSlot({
+      directory,
+      size: 2,
+      holder: second,
+      exclusive: true,
+    })
+    const winner = await Promise.race([
+      firstAlone.then(() => first),
+      secondAlone.then(() => second),
+      sleep(10_000).then(() => undefined),
+    ])
+    expect(winner).toBeDefined()
+    if (winner === undefined) return
+
+    releaseSlots(directory, winner)
+    expect(await takes(winner === first ? secondAlone : firstAlone)).toBe(true)
   })
 
   it('lets two that both want every slot take turns', async () => {

@@ -207,6 +207,7 @@ export default defineConfig({
   test: {
     include: ['src/**/*.integration.spec.ts'],
     globalSetup: ['./reset-lanes.ts'],
+    setupFiles: ['@evandam93/dev-env/lane-slot'],
   },
 })
 ```
@@ -233,11 +234,18 @@ await environment.startService('postgres')
 
 Each test file holds one of the machine's lane slots from `startTestEnvironment` until its process exits, so runs from several worktrees can go at once without slowing each other until tests time out.
 A file that finds every slot held waits, and prints which environments hold them.
+It gives up after an hour, naming them, so a holder that hangs does not keep a run waiting for good.
 The number of slots is what Docker's memory holds after the shared services, at about 384 MB a lane, and no more than one for every 3 of the host's cores, since each lane's processes run on the host.
 `DEV_ENV_LANE_SLOTS` sets it instead.
 
+Add `@evandam93/dev-env/lane-slot` to Vitest's `setupFiles`, as above, so a file takes its slot before any of its hooks run.
+Vitest puts no timeout on a setup file, so the wait for a slot another run holds never counts against the `hookTimeout` of the `beforeAll` that starts the environment, whose clock starts once the slot is held.
+Without it, the wait happens inside that hook, and a file can fail with `Hook timed out` while another worktree's run holds the machine.
+
 A file whose results depend on timing passes `exclusive: true`, or runs with `DEV_ENV_EXCLUSIVE=1`, and holds every slot.
+The setup file reads only `DEV_ENV_EXCLUSIVE`, so a file that passes `exclusive: true` still waits for the other slots inside its hook.
 While it waits for the files already running, no other file takes a slot, and a file that waits holds nothing, so two exclusive files take turns.
+A file that already holds its slot keeps it when it asks again, since the exclusive file is waiting for it.
 
 A slot is a file under `lanes/` in the machine directory, holding its process's pid and start time.
 A process that exits releases its slots, also on `SIGINT` and `SIGTERM`, and a waiter removes the slot of a process that died or whose pid now belongs to another process, so a killed run never keeps one.

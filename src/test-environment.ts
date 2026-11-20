@@ -51,11 +51,17 @@ export interface TestEnvironmentOptions {
 let held: Holder | undefined
 
 /*
+ * Long enough to wait out another worktree's whole run, and short enough that
+ * a holder that hangs does not keep a run waiting for good.
+ */
+const SLOT_WAIT_MS = 60 * 60 * 1000
+
+/*
  * The slot belongs to this process, which runs one test file, so it frees
  * when the file ends however it ends; a process killed outright leaves a
  * record the next waiter sees is dead.
  */
-const holdSlotUntilExit = async (
+export const holdSlotUntilExit = async (
   name: string,
   exclusive: boolean
 ): Promise<void> => {
@@ -77,12 +83,16 @@ const holdSlotUntilExit = async (
     size: await slotCountOnMachine(),
     holder,
     exclusive,
+    timeoutMs: SLOT_WAIT_MS,
     onWait: (reason) =>
       process.stderr.write(`${name} waits for a lane slot: ${reason}.\n`),
   })
 }
 
-const laneOf = (lane: number | undefined): number => {
+export const isExclusiveByEnvironment = (): boolean =>
+  process.env.DEV_ENV_EXCLUSIVE === '1'
+
+export const laneOf = (lane: number | undefined): number => {
   const chosen = lane ?? Number(process.env.VITEST_POOL_ID ?? '1')
   return Number.isInteger(chosen) && chosen > 0 ? chosen : 1
 }
@@ -101,7 +111,7 @@ export const startTestEnvironment = async (
   const mode: Mode = testModeOf(laneOf(options.lane))
   await holdSlotUntilExit(
     `${target} ${mode} in ${cwd}`,
-    options.exclusive ?? process.env.DEV_ENV_EXCLUSIVE === '1'
+    options.exclusive ?? isExclusiveByEnvironment()
   )
   const { name, services } = await startTestTarget(cwd, target, mode, {
     without: options.without ?? [],
