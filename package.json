@@ -37,6 +37,10 @@
       "types": "./dist/affected/index.d.ts",
       "default": "./dist/affected/index.js"
     },
+    "./lane-slot": {
+      "types": "./dist/lane-slot.d.ts",
+      "default": "./dist/lane-slot.js"
+    },
     "./package.json": "./package.json"
   },
   "publishConfig": {

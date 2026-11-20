@@ -32,6 +32,12 @@ process.env.DEV_ENV_HOME = mkdtempSync(join(tmpdir(), 'dev-env-home-'))
  */
 const CLI = fileURLToPath(new URL('../bin/dev-env.js', import.meta.url))
 const ENTRY = fileURLToPath(new URL('../dist/index.js', import.meta.url))
+const LANE_SLOT = fileURLToPath(
+  new URL('../dist/lane-slot.js', import.meta.url)
+)
+const VITEST = fileURLToPath(
+  new URL('../node_modules/vitest/vitest.mjs', import.meta.url)
+)
 
 interface CliResult {
   readonly code: number
@@ -100,6 +106,33 @@ const LANE_HOLDER = `import { startTestEnvironment } from ${JSON.stringify(
 await startTestEnvironment('store', { cwd: process.argv[2], lane: Number(process.argv[3]) })
 console.log('started')
 setInterval(() => {}, 1e6)
+`
+
+/*
+ * A test file as a user writes one, run by Vitest with the package's setup
+ * file and a hook timeout shorter than its wait for a slot. Globals, because
+ * the workspace has no Vitest of its own to import.
+ */
+const WAITING_HOOK_TIMEOUT_MS = 15_000
+
+const WAITING_SPEC = `import { startTestEnvironment } from ${JSON.stringify(ENTRY)}
+let environment
+beforeAll(async () => {
+  environment = await startTestEnvironment('store')
+})
+it('starts once a slot is free', () => {
+  expect(environment.services.store.running).toBe(true)
+})
+`
+
+const WAITING_CONFIG = `export default {
+  test: {
+    globals: true,
+    include: ['waits.spec.mjs'],
+    setupFiles: [${JSON.stringify(LANE_SLOT)}],
+    hookTimeout: ${WAITING_HOOK_TIMEOUT_MS},
+  },
+}
 `
 
 // Its setup reads the store, so a line holding "ok" proves the store was healthy first, and each line is one run.
@@ -618,6 +651,59 @@ describe('compose services', () => {
 
     first.child.kill('SIGKILL')
     await until(second.output, 'started')
+  })
+
+  it('waits for a slot outside the hook timeout, so a file that waits longer than it still passes', async () => {
+    const root = await createWorkspace(STORE)
+    writeFileSync(join(root, 'lane-holder.mjs'), LANE_HOLDER)
+    writeFileSync(join(root, 'waits.spec.mjs'), WAITING_SPEC)
+    writeFileSync(join(root, 'vitest.config.mjs'), WAITING_CONFIG)
+    const environment = {
+      ...process.env,
+      DEV_ENV_HOME: mkdtempSync(join(tmpdir(), 'dev-env-home-')),
+      DEV_ENV_LANE_SLOTS: '1',
+    }
+    const output = (child: ReturnType<typeof spawn>) => {
+      let text = ''
+      child.stdout?.on('data', (chunk) => (text += chunk))
+      child.stderr?.on('data', (chunk) => (text += chunk))
+      cleanups.unshift(async () => child.kill('SIGKILL'))
+      return () => text
+    }
+    const until = async (read: () => string, text: string) => {
+      const deadline = Date.now() + 120_000
+      while (!read().includes(text)) {
+        if (Date.now() > deadline)
+          throw new Error(`never printed ${text}: ${read()}`)
+        await sleep(100)
+      }
+    }
+
+    const holder = spawn(
+      process.execPath,
+      [join(root, 'lane-holder.mjs'), root, '2'],
+      { env: environment }
+    )
+    await until(output(holder), 'started')
+
+    const run = spawn(process.execPath, [VITEST, 'run'], {
+      cwd: root,
+      env: environment,
+    })
+    const runOutput = output(run)
+    const exited = new Promise<number | null>((resolve) =>
+      run.once('exit', resolve)
+    )
+    await until(
+      runOutput,
+      'waits for a lane slot: all 1 lane slots are held by store test-2'
+    )
+    await sleep(WAITING_HOOK_TIMEOUT_MS + 5_000)
+    holder.kill('SIGKILL')
+
+    const code = await exited
+    expect(runOutput()).not.toContain('Hook timed out')
+    expect(code, runOutput()).toBe(0)
   })
 
   it('keeps lanes apart, so files running side by side share no data, and resets them all', async () => {

@@ -150,6 +150,9 @@ const describeHolders = (held: readonly Held[]): string =>
     .map(({ name, pid }) => `${name} (pid ${pid})`)
     .join(', ')
 
+const durationOf = (ms: number): string =>
+  ms < 60_000 ? `${ms / 1000} seconds` : `${Math.round(ms / 60_000)} minutes`
+
 export interface TakeSlotOptions {
   readonly directory: string
   readonly size: number
@@ -157,13 +160,16 @@ export interface TakeSlotOptions {
   /** Every slot on the machine, so nothing else runs beside a file that measures time. */
   readonly exclusive?: boolean
   readonly onWait?: (reason: string) => void
+  /** How long to wait before giving up, saying who holds the slots. */
+  readonly timeoutMs?: number
 }
 
 /*
  * Returns once the holder has a slot, or every slot when exclusive. While one
  * holder waits to run alone, no one else takes a slot, so it waits only for
  * the files already running. A holder waiting holds nothing, so two that both
- * want every slot never wait on each other.
+ * want every slot never wait on each other, and one that already runs keeps
+ * its slot, since the holder waiting to run alone is waiting for it.
  */
 export const takeSlot = async ({
   directory,
@@ -171,9 +177,15 @@ export const takeSlot = async ({
   holder,
   exclusive = false,
   onWait = () => undefined,
+  timeoutMs = Number.POSITIVE_INFINITY,
 }: TakeSlotOptions): Promise<void> => {
+  const deadline = Date.now() + timeoutMs
   let lastReason = ''
   const wait = async (reason: string): Promise<void> => {
+    if (Date.now() >= deadline)
+      throw new DevEnvError(
+        `No lane slot came free in ${durationOf(timeoutMs)}: ${reason}.`
+      )
     if (reason !== lastReason) onWait(reason)
     lastReason = reason
     await sleep(POLL_MS)
@@ -182,15 +194,17 @@ export const takeSlot = async ({
   for (;;) {
     const held = await liveRecords(directory)
     const marker = held.find(({ file }) => file === EXCLUSIVE)
+    const slots = held.filter(({ file }) => file !== EXCLUSIVE)
+    const ours = slots.filter((slot) => isSame(slot.holder, holder))
+    if (!exclusive && ours.length > 0) return
+
     if (marker !== undefined && !isSame(marker.holder, holder)) {
+      if (ours.length > 0) releaseSlots(directory, holder)
       await wait(`${describeHolders([marker])} is running alone`)
       continue
     }
-    const slots = held.filter(({ file }) => file !== EXCLUSIVE)
-    const ours = slots.filter((slot) => isSame(slot.holder, holder))
 
     if (!exclusive) {
-      if (ours.length > 0) return
       const free = Array.from({ length: size }, (_, i) => `slot-${i}.json`)
         .filter((file) => !slots.some((slot) => slot.file === file))
         .find((file) => tryCreate(join(directory, file), holder))
