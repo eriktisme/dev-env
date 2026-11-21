@@ -1,5 +1,11 @@
 # @evandam93/dev-env
 
+## 0.3.0
+
+### Minor Changes
+
+- [#7](https://github.com/eriktisme/dev-env/pull/7) [`f2dca3c`](https://github.com/eriktisme/dev-env/commit/f2dca3cb4c1f2d694253991a029cc1892420e232) Thanks [@eriktisme](https://github.com/eriktisme)! - A target can now select the integration specs of the workspace packages that use its test environment: list them in the manifest's `consumers`, and `dev-env affected` chooses each package's specs by what they import and by what the target's processes run, runs each package's own script with the chosen files, and exits non-zero if any group failed, after running them all. A change to the target's manifest, compose files or settings runs every consumer's specs, and one to a package's own `package.json`, `tsconfig.json` or Vitest config runs only that package's. `specs.always` and `specs.beforeRelease` now accept globs. A spec whose literal `startTestEnvironment` target is another target is refused. Fixed: a `shared` glob with a leading `/` never matched a path inside the target's own directory.
+
 ## 0.2.0
 
 ### Minor Changes
