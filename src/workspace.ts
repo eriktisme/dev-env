@@ -185,3 +185,13 @@ export const commandOf = (
   bin: string,
   args: readonly string[]
 ): readonly string[] => [...RUNNERS[packageManager], bin, ...args]
+
+/** The command that runs the package.json script `script` of the package in the working directory, with `files` as its arguments. */
+export const scriptCommandOf = (
+  packageManager: PackageManager,
+  script: string,
+  files: readonly string[]
+): readonly string[] =>
+  packageManager === 'npm'
+    ? ['npm', 'run', script, '--', ...files]
+    : [packageManager, 'run', script, ...files]

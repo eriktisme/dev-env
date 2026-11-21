@@ -1,3 +1,5 @@
+import { join } from 'node:path'
+
 import { type Graph, isRuntime, type Reach, type Route } from './graph.ts'
 
 export type Selection =
@@ -22,6 +24,20 @@ const patternOf = (glob: string): RegExp =>
 
 export const matches = (glob: string, path: string): boolean =>
   patternOf(glob).test(path)
+
+/** The specs the patterns name: each glob's matches among `allSpecs`, and each literal path as written. */
+export const expandSpecs = (
+  patterns: readonly string[],
+  allSpecs: readonly string[]
+): string[] => [
+  ...new Set(
+    patterns.flatMap((pattern) =>
+      pattern.includes('*')
+        ? allSpecs.filter((spec) => matches(pattern, spec))
+        : [pattern]
+    )
+  ),
+]
 
 const describe = (path: string, route: Route): string =>
   route.kind === 'imports'
@@ -54,7 +70,12 @@ export const selectSpecs = (
   for (const path of changed) {
     // Tests, stories and docs run nowhere, even inside a shared directory.
     if (!graph.specs.has(path) && !isRuntime(path)) continue
-    const shared = graph.shared.find((glob) => matches(glob, path))
+    const repositoryPath = path.startsWith('/')
+      ? path
+      : `/${join(graph.directory, path)}`
+    const shared = graph.shared.find((glob) =>
+      matches(glob, glob.startsWith('/') ? repositoryPath : path)
+    )
     if (shared !== undefined) {
       everything.push(`${path} is shared, as ${shared}`)
       continue
@@ -76,7 +97,7 @@ export const selectSpecs = (
   }
 }
 
-/** Integration specs a pull request runs whatever it changes, and those it leaves to the full suite before a release. */
+/** Integration spec globs a pull request runs whatever it changes, and those it leaves to the full suite before a release. */
 export interface SpecLists {
   readonly always?: readonly string[]
   readonly beforeRelease?: readonly string[]
@@ -97,11 +118,11 @@ export const forPullRequest = (
       ? allSpecs.map((spec) => [spec, selection.because])
       : selection.specs
   )
-  for (const spec of always)
+  for (const spec of expandSpecs(always, allSpecs))
     chosen.set(spec, [
       ...(chosen.get(spec) ?? []),
       'every pull request runs it',
     ])
-  for (const spec of beforeRelease) chosen.delete(spec)
+  for (const spec of expandSpecs(beforeRelease, allSpecs)) chosen.delete(spec)
   return new Map([...chosen].sort(([a], [b]) => a.localeCompare(b)))
 }

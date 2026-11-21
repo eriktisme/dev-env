@@ -6,8 +6,9 @@ import { dirname, join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import { graphOf, type Layout, startedBy } from './graph.ts'
-import { layoutOf } from './layout.ts'
+import { consumerLayoutsOf, layoutOf } from './layout.ts'
 import { type Selection, selectSpecs } from './select.ts'
+import type { Manifest } from '../manifest.ts'
 import { repositorySharedOf } from '../workspace.ts'
 
 /*
@@ -319,5 +320,102 @@ describe('reading the Workers a spec starts', () => {
     expect(() =>
       startedBy(layout, 'src/scenarios/typo.integration.spec.ts')
     ).toThrow(/leaves out wbe, which its target's manifest does not start/)
+  })
+})
+
+describe("a target's consumers", () => {
+  const writeAt = (path: string, text: string) => {
+    const file = join(root, path)
+    mkdirSync(dirname(file), { recursive: true })
+    writeFileSync(file, text)
+  }
+
+  const manifest = (consumers: Manifest['consumers']): Manifest => ({
+    services: {
+      api: {
+        kind: 'process',
+        command: () => [],
+        readinessPath: '/',
+        sources: ['workers/api'],
+      },
+    },
+    consumers,
+  })
+
+  const groups = (
+    consumers: Manifest['consumers'] = { '@x/a': {}, '@x/b': {} }
+  ) => consumerLayoutsOf(join(root, 'apps/db'), root, manifest(consumers))
+
+  const chosenIn = (name: string, changed: string[]) => {
+    const group = groups().find((candidate) => candidate.name === name)
+    if (group === undefined) throw new Error(`No group ${name}`)
+    return chosen(selectSpecs(graphOf(group.layout), changed))
+  }
+
+  beforeEach(() => {
+    writeAt(
+      'package.json',
+      JSON.stringify({ private: true, workspaces: ['apps/*'] })
+    )
+    writeAt('package-lock.json', '{}')
+    for (const [directory, name] of [
+      ['db', '@x/db'],
+      ['a', '@x/a'],
+      ['b', '@x/b'],
+    ] as const)
+      writeAt(`apps/${directory}/package.json`, JSON.stringify({ name }))
+    writeAt('apps/db/workers/api/src/index.ts', 'export default {}\n')
+    for (const consumer of ['a', 'b']) {
+      writeAt(`apps/${consumer}/src/subject.ts`, 'export const subject = 1\n')
+      writeAt(
+        `apps/${consumer}/src/subject.integration.spec.ts`,
+        "import { subject } from './subject'\nstartTestEnvironment('db', { without: [] })\n"
+      )
+    }
+  })
+
+  it('chooses only the package whose spec imports the changed file', () => {
+    expect(chosenIn('@x/a', ['src/subject.ts'])).toEqual([
+      'src/subject.integration.spec.ts',
+    ])
+    expect(chosenIn('@x/b', ['/apps/a/src/subject.ts'])).toEqual([])
+  })
+
+  it("reaches a consumer through the target's processes, read from the repository", () => {
+    expect(chosenIn('@x/b', ['/apps/db/workers/api/src/index.ts'])).toEqual([
+      'src/subject.integration.spec.ts',
+    ])
+  })
+
+  it("runs every consumer's specs for a change to the target's manifest", () => {
+    expect(chosenIn('@x/a', ['/apps/db/dev-env.ts'])).toEqual(['everything'])
+    expect(chosenIn('@x/b', ['/apps/db/dev-env.ts'])).toEqual(['everything'])
+  })
+
+  it("runs only a package's own specs for a change to its test settings", () => {
+    expect(chosenIn('@x/a', ['vitest.config.mts'])).toEqual(['everything'])
+    expect(chosenIn('@x/b', ['/apps/a/vitest.config.mts'])).toEqual([])
+  })
+
+  it('matches a glob from the repository against a file inside the layout', () => {
+    const inside = { ...layout, shared: ['/target/seed/**'] }
+    expect(chosen(selectSpecs(graphOf(inside), ['seed/data.ts']))).toEqual([
+      'everything',
+    ])
+    expect(chosen(selectSpecs(graphOf(inside), ['other/data.ts']))).toEqual([])
+  })
+
+  it('refuses a consumer that is no workspace package, and the target itself', () => {
+    expect(() => groups({ '@x/missing': {} })).toThrow('@x/missing')
+    expect(() => groups({ '@x/db': {} })).toThrow('lists itself')
+  })
+
+  it('refuses a spec that starts the environment of another target', () => {
+    writeAt(
+      'apps/a/src/subject.integration.spec.ts',
+      "startTestEnvironment('other')\n"
+    )
+    const [group] = groups({ '@x/a': {} })
+    expect(() => graphOf(group!.layout)).toThrow('"other"')
   })
 })
