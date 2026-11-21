@@ -18,11 +18,13 @@ import { type Cache, createPathsMatcher, getTsconfig } from 'get-tsconfig'
 import { parseSync } from 'oxc-parser'
 
 export interface Layout {
-  /** The target's directory. */
+  /** The directory the specs are in: the target's, or a consumer package's. */
   readonly target: string
+  /** The target's name, which a spec's literal first argument to `startTestEnvironment` must match when given. */
+  readonly name?: string
   /** The repository's directory. */
   readonly repository: string
-  /** Each process the target can start, by the name a spec's `without` uses, with its `sources`. */
+  /** Each process the target can start, by the name a spec's `without` uses, with its `sources`, which start with `/` when they are from the repository. */
   readonly processes: ReadonlyMap<string, readonly string[]>
   /** Each workspace package of the repository by its name, with its directory, as `/libs/ui/`. */
   readonly packages: ReadonlyMap<string, string>
@@ -228,7 +230,12 @@ export const startedBy = (layout: Layout, spec: string): string[] => {
     throw new Error(
       `${spec} calls startTestEnvironment ${calls.length} times; the selection reads one call.`
     )
-  const [, options] = (calls[0]?.arguments ?? []) as unknown[]
+  const [first, options] = (calls[0]?.arguments ?? []) as unknown[]
+  const asked = stringOf(first)
+  if (layout.name !== undefined && asked !== undefined && asked !== layout.name)
+    throw new Error(
+      `${spec} starts the environment of "${asked}", but its layout belongs to the target "${layout.name}".`
+    )
   const all = [...layout.processes.keys()]
   if (options === undefined) return all
   const without = isNode(options)
@@ -260,6 +267,8 @@ export const startedBy = (layout: Layout, spec: string): string[] => {
 }
 
 export interface Graph {
+  /** The layout's directory from the repository, without a leading or trailing `/`, which a path relative to it needs to be matched by a glob from the repository. */
+  readonly directory: string
   readonly specs: ReadonlyMap<string, Reach>
   /** The layout's shared globs, a change to any of which reaches every spec. */
   readonly shared: readonly string[]
@@ -277,8 +286,11 @@ export const specsIn = (layout: Layout): string[] =>
  * build that rewrites its output while the selection reads would otherwise
  * take files from under it, and its output is no code anyone changes.
  */
-const codeUnder = (layout: Layout, source: string): string[] =>
-  execFileSync(
+const codeUnder = (layout: Layout, source: string): string[] => {
+  // A source from the repository is a top-level pathspec, listed from the repository so its paths are too.
+  const fromRepository = source.startsWith('/')
+  const cwd = fromRepository ? layout.repository : layout.target
+  return execFileSync(
     'git',
     [
       'ls-files',
@@ -287,21 +299,21 @@ const codeUnder = (layout: Layout, source: string): string[] =>
       '--others',
       '--exclude-standard',
       '--',
-      source,
+      fromRepository ? `:(top)${source.slice(1)}` : source,
     ],
-    { cwd: layout.target, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }
+    { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }
   )
     .split('\0')
     .filter((path) => /\.(ts|tsx|js|mjs)$/.test(path))
+    .map((path) => join(cwd, path))
+}
 
 export const graphOf = (layout: Layout): Graph => {
   const sourcesImports = new Map<string, Imports>()
   const importsUnder = (source: string): Imports => {
     const known = sourcesImports.get(source)
     if (known !== undefined) return known
-    const files = codeUnder(layout, source)
-      .filter(isRuntime)
-      .map((path) => join(layout.target, path))
+    const files = codeUnder(layout, source).filter(isRuntime)
     const found = importedFrom(layout, files)
     sourcesImports.set(source, found)
     return found
@@ -329,5 +341,9 @@ export const graphOf = (layout: Layout): Graph => {
     }
     specs.set(spec, { files, directories })
   }
-  return { specs, shared: layout.shared }
+  return {
+    directory: relative(layout.repository, layout.target),
+    specs,
+    shared: layout.shared,
+  }
 }

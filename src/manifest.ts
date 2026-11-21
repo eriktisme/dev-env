@@ -60,6 +60,23 @@ export interface SetupContext {
   readonly ports: Readonly<Record<string, number>>
 }
 
+/** A workspace package whose integration specs use the target's test environment. */
+export interface Consumer {
+  /** The package.json script that runs the chosen specs, given as arguments. Defaults to `tests:integration`. */
+  readonly script?: string
+  /**
+   * Globs, relative to the package or from the repository with a leading `/`,
+   * for what its specs are built from without importing it. A change to one
+   * runs every integration spec of the package.
+   */
+  readonly shared?: readonly string[]
+  /** Globs, relative to the package, for its specs a pull request always runs, and those only the full suite runs before a release. */
+  readonly specs?: {
+    readonly always?: readonly string[]
+    readonly beforeRelease?: readonly string[]
+  }
+}
+
 export interface Manifest {
   readonly services: Readonly<Record<string, Service>>
   /**
@@ -69,15 +86,21 @@ export interface Manifest {
    */
   readonly shared?: readonly string[]
   /**
-   * Integration specs, relative to the target, that a pull request's affected
-   * run always holds, such as the product's own scenarios, and those it never
-   * holds, which only the full suite runs before a release, such as a paced
-   * replay.
+   * Integration specs, as globs relative to the target, that a pull request's
+   * affected run always holds, such as the product's own scenarios, and those
+   * it never holds, which only the full suite runs before a release, such as
+   * a paced replay.
    */
   readonly specs?: {
     readonly always?: readonly string[]
     readonly beforeRelease?: readonly string[]
   }
+  /**
+   * The workspace packages, by the name their package.json gives them, whose
+   * integration specs use this target's test environment. `dev-env affected`
+   * chooses their specs too, each package in a group of its own.
+   */
+  readonly consumers?: Readonly<Record<string, Consumer>>
   /**
    * Runs on every dev start, once the compose services are healthy and before
    * any process starts, so it must be safe to run again, as migrations are.

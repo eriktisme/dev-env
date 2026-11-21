@@ -990,3 +990,103 @@ describe('a manifest', () => {
     ).toBe('web ok')
   })
 })
+
+describe('affected specs of a target and its consumers', () => {
+  // Each consumer's script records the files it was given and exits with its own code.
+  const consumer = (root: string, name: string, exitCode: number) => {
+    writeTarget(root, name, {
+      'record.mjs': `import { writeFileSync } from 'node:fs'
+writeFileSync('ran.txt', process.argv.slice(2).join('\\n'))
+process.exit(${exitCode})
+`,
+      'subject.ts': 'export const subject = 1\n',
+      'other.ts': 'export const other = 1\n',
+      'subject.integration.spec.ts': "import { subject } from './subject'\n",
+      'other.integration.spec.ts': "import { other } from './other'\n",
+    })
+    writeFileSync(
+      join(root, 'apps', name, 'package.json'),
+      JSON.stringify({
+        name,
+        private: true,
+        type: 'module',
+        scripts: { 'tests:integration': 'node record.mjs' },
+      })
+    )
+  }
+
+  const createConsumers = async (): Promise<string> => {
+    const root = await createWorkspace({
+      db: {
+        'dev-env.ts': `export default { services: {}, consumers: { a: {}, b: {} } }\n`,
+      },
+    })
+    consumer(root, 'a', 1)
+    consumer(root, 'b', 0)
+    await git(root, 'add', '.')
+    await git(
+      root,
+      '-c',
+      'user.name=Test',
+      '-c',
+      'user.email=test@example.com',
+      'commit',
+      '--quiet',
+      '-m',
+      'baseline'
+    )
+    return root
+  }
+
+  const touch = (root: string, ...files: string[]) => {
+    for (const file of files)
+      writeFileSync(join(root, 'apps', file), 'export const changed = 2\n')
+  }
+
+  const ranIn = (root: string, name: string): string | undefined => {
+    try {
+      return readFileSync(join(root, 'apps', name, 'ran.txt'), 'utf8')
+    } catch {
+      return undefined
+    }
+  }
+
+  it('lists each consumer with the specs its changes choose', async () => {
+    const root = await createConsumers()
+    touch(root, 'a/subject.ts')
+
+    const result = await cli(root, 'affected', 'db', '--base', 'HEAD', '--list')
+
+    expect(result.code).toBe(0)
+    expect(result.stdout).toContain('db: 1 paths changed')
+    expect(result.stdout).toMatch(
+      /a, in apps\/a:\n[^]*subject\.integration\.spec\.ts/
+    )
+    expect(result.stdout).toMatch(/b, in apps\/b:\nNo change reaches/)
+    expect(result.stdout).not.toContain('other.integration.spec.ts')
+    expect(ranIn(root, 'a')).toBeUndefined()
+  })
+
+  it('runs only the affected package with only the files its change chose', async () => {
+    const root = await createConsumers()
+    touch(root, 'b/other.ts')
+
+    const result = await cli(root, 'affected', 'db', '--base', 'HEAD')
+
+    expect(result.code).toBe(0)
+    expect(ranIn(root, 'b')).toBe('other.integration.spec.ts')
+    expect(ranIn(root, 'a')).toBeUndefined()
+  })
+
+  it('runs every group after one fails, and exits with the failure', async () => {
+    const root = await createConsumers()
+    touch(root, 'a/subject.ts', 'b/subject.ts')
+
+    const result = await cli(root, 'affected', 'db', '--base', 'HEAD')
+
+    expect(result.code).toBe(1)
+    expect(ranIn(root, 'a')).toBe('subject.integration.spec.ts')
+    expect(ranIn(root, 'b')).toBe('subject.integration.spec.ts')
+    expect(result.stdout).toContain('Exit codes: db not run, a 1, b 0.')
+  })
+})

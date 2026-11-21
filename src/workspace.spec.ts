@@ -9,6 +9,7 @@ import {
   commandOf,
   packageManagerOf,
   repositorySharedOf,
+  scriptCommandOf,
   workspacePackagesOf,
 } from './workspace.ts'
 
@@ -178,6 +179,31 @@ describe("a repository's package manager", () => {
       '--',
       'vitest',
       'run',
+    ])
+  })
+})
+
+describe('running a package script', () => {
+  it('passes the files as arguments the way each package manager does', () => {
+    const files = ['a.integration.spec.ts', 'b.integration.spec.ts']
+    expect(scriptCommandOf('npm', 'tests:integration', files)).toEqual([
+      'npm',
+      'run',
+      'tests:integration',
+      '--',
+      ...files,
+    ])
+    expect(scriptCommandOf('pnpm', 'tests:integration', files)).toEqual([
+      'pnpm',
+      'run',
+      'tests:integration',
+      ...files,
+    ])
+    expect(scriptCommandOf('yarn', 'tests:integration', files)).toEqual([
+      'yarn',
+      'run',
+      'tests:integration',
+      ...files,
     ])
   })
 })

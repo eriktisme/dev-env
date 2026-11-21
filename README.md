@@ -111,7 +111,9 @@ The other fields are optional too:
 
 - `testSettings`: settings every test environment of the target starts with, which a command reads from its context's `settings`.
 - `shared`: globs for what every integration spec is built from without importing it, for `dev-env affected`.
-- `specs.always` and `specs.beforeRelease`: integration specs `dev-env affected` always runs, and those it leaves to the full suite.
+- `specs.always` and `specs.beforeRelease`: integration specs `dev-env affected` always runs, and those it leaves to the full suite, as paths or globs relative to the target.
+- `consumers`: the workspace packages, by the name their `package.json` gives them, whose integration specs use this target's test environment, so `dev-env affected` chooses their specs too.
+  Each takes an optional `script`, the `package.json` script that runs the chosen specs (default `tests:integration`), `shared`, globs for what only that package's specs are built from, and its own `specs.always` and `specs.beforeRelease`.
 
 ## Identity
 
@@ -279,9 +281,26 @@ It reads each fact where it already lives, so nothing is kept by hand:
 - Tests, stories and docs run nowhere, and a path no spec reaches runs nothing.
 
 `specs.always` names specs every run holds, such as the product's own scenarios, and `specs.beforeRelease` those it never holds, such as a slow paced replay, which only the full suite runs.
+Both take paths or globs, such as `**/*.volume.integration.spec.ts`.
 Bindings between processes are not followed: in a test environment a process answers only when the spec starts it.
 
-`@evandam93/dev-env/affected` exports the same selection, `layoutOf`, `graphOf`, `selectSpecs` and `forPullRequest`, for a test that pins which specs a change chooses.
+### Consumers
+
+A spec of another workspace package may start the target's test environment.
+List that package in the target's `consumers`, or no change selects its specs.
+Each consumer is a group of its own, and the target's own specs are the first group.
+A group reads the specs in its package, and reaches what they import and what the target's processes run, given as paths from the repository.
+Its shared paths are the repository's, the target's own and the manifest's `shared` read from the repository, so a change to the target's manifest, compose files or settings runs every consumer's specs, and the package's own `package.json`, `tsconfig.json`, `tsconfig.*.json`, `vitest.config.*` and `vite.config.*`, plus the consumer's `shared`, which run only that package's specs.
+A spec that does not call `startTestEnvironment` is still chosen by what it imports, and one whose literal first argument names another target is refused.
+
+A group with no chosen spec is skipped.
+Otherwise it runs the consumer's script in the package's directory with the chosen files as arguments: `npm run <script> -- <files>`, or `pnpm run <script> <files>` or `yarn run <script> <files>`.
+The script must pass them on to Vitest.
+Groups run one after another, and every group runs even after one fails.
+The command exits 0 only when every group passed, and else with the first non-zero exit code, after a last line naming each group and its code.
+`--list` says, for each group, which specs it would run and why.
+
+`@evandam93/dev-env/affected` exports the same selection, `layoutOf`, `consumerLayoutsOf`, `graphOf`, `selectSpecs` and `forPullRequest`, for a test that pins which specs a change chooses.
 `graphOf` reads the target from git, so it runs inside a git checkout.
 
 ## What it does not do

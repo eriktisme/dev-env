@@ -12,4 +12,5 @@ These are the rules that cost the most when missed.
 - `src/dev-env.integration.spec.ts` drives the real command line. Add behaviour to it through the commands rather than by importing internals.
 - Nothing here may name a repository it runs in. Targets, workspace packages, the package manager and the default branch are read from the repository, so a hard-coded directory, scope or tool is a bug.
 - A process service's `sources` decide which integration specs a change reaches. Name every directory of code the process runs, including one it loads beside its own, or a change there runs no spec.
+- A workspace package whose specs use a target's environment is listed in that target's `consumers`, or no change selects its specs.
 - A change a user would notice adds a changeset, with `npm run changeset`. Never edit `CHANGELOG.md` by hand.

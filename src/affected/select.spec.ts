@@ -47,4 +47,30 @@ describe("a pull request's specs", () => {
       ).keys(),
     ]).toEqual(['src/intake.integration.spec.ts'])
   })
+
+  it('reads a spec list as globs, and a path without one as itself', () => {
+    const allSpecs = [
+      'src/door.integration.spec.ts',
+      'src/replay.volume.integration.spec.ts',
+      'src/intake.integration.spec.ts',
+    ]
+    expect([
+      ...forPullRequest(
+        { kind: 'everything', because: ['dev-env.ts is shared'] },
+        allSpecs,
+        {
+          always: ['src/intake.integration.spec.ts'],
+          beforeRelease: ['**/*.volume.integration.spec.ts'],
+        }
+      ).keys(),
+    ]).toEqual([
+      'src/door.integration.spec.ts',
+      'src/intake.integration.spec.ts',
+    ])
+    expect([
+      ...forPullRequest({ kind: 'specs', specs: new Map() }, allSpecs, {
+        always: ['src/*.volume.integration.spec.ts'],
+      }).keys(),
+    ]).toEqual(['src/replay.volume.integration.spec.ts'])
+  })
 })
