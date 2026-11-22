@@ -4,7 +4,7 @@ I kept running into the same wall: two git worktrees, or two coding agents, both
 One wins, the other fails, and you lose ten minutes figuring out which branch owns what.
 
 dev-env gives every checkout and target its own development environment, with no port pinned anywhere.
-You describe a target's services in a `dev-env.ts` beside its code: containers from its `compose.yaml`, and processes such as a dev server.
+You describe a target's services in a `dev-env.ts` beside its code: containers from its `compose.yaml`, and processes such as a dev server or Cloudflare Workers.
 `dev-env start` gives each service a free port, starts them in order, and returns once every one answers.
 A second worktree gets its own containers, ports and data, so branches never fight.
 Integration tests get the same setup in a test mode, with empty data for every file and lanes so files can run side by side.
@@ -103,6 +103,38 @@ That directory survives `dev-env stop` and goes away on `dev-env reset`, like a 
 - `readinessPath`: the path that answers below 400 once the process is usable.
 - `sources`: the directories, relative to the target, that hold the code it runs. `dev-env affected` reads these.
 - `timeoutMs`: how long the service may take to become ready. Compose services accept it too.
+
+### Worker services
+
+A `worker` service runs Cloudflare Workers locally with Wrangler's Miniflare, as `wrangler dev --local`, which never reaches an account.
+It is a process underneath, so it has the same port, log, readiness check, `sources` and `timeoutMs`, and `dev-env info --json` reports its `url`.
+Wrangler is not bundled: the target's own dependencies must resolve `wrangler` (version 4), so the repository chooses the version.
+
+```ts
+// apps/edge/dev-env.ts
+import { defineManifest } from '@evandam93/dev-env'
+
+export default defineManifest({
+  services: {
+    edge: {
+      kind: 'worker',
+      configs: ['wrangler/web.json', 'wrangler/events.json'],
+      readinessPath: '/',
+      sources: ['src'],
+      bindings: async ({ worker, addressOf }) => ({
+        DATABASE_URL: `postgres://postgres:local@${await addressOf('database', 'postgres')}/postgres`,
+        ...(worker === 'events' ? { SIGNING_SECRET: 'local-only' } : {}),
+      }),
+    },
+  },
+})
+```
+
+- `configs`: Wrangler configs as JSON, relative to the target. The first is the primary Worker and answers on the service's port. Every config is the service's own Worker in the same process, so a Worker reaches the others through its service bindings.
+- One process is what makes Queues work. Miniflare's queue broker lives inside the process, so a producer's message reaches a consumer only when both run in the same service. Durable Objects, R2, KV, D1 and Workflows share that process and one persist directory too.
+- State lives in the target's `data/` directory, so it survives `dev-env stop` and goes on `dev-env reset`, and a test environment starts every file on empty state.
+- `bindings`: the variables and secrets of one Worker, called once per Worker on every start. They reach Wrangler as a `.dev.vars` file that dev-env writes under its data directory, readable by its owner only, and nothing is read from the shell's environment. `worker` is the Worker's `name`, and `addressOf(target, service)` is the address of a service another target of this checkout and mode is running, such as its database. It fails the start when that service is not running.
+- dev-env copies each config into its data directory to place that file beside it, and makes `main`, `base_dir`, `assets.directory` and `build.cwd` absolute. A config with another relative path needs it absolute.
 
 ### Start order and hooks
 
