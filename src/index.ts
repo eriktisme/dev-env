@@ -5,6 +5,8 @@ export type {
   ProcessService,
   Service,
   SetupContext,
+  WorkerBindingsContext,
+  WorkerService,
 } from './manifest.ts'
 export { defineManifest } from './manifest.ts'
 export type {

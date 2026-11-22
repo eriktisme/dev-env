@@ -41,6 +41,48 @@ export interface ProcessService {
   readonly sources: readonly string[]
 }
 
+export interface WorkerBindingsContext extends CommandContext {
+  /** The `name` of the Worker whose bindings are being written. */
+  readonly worker: string
+  /**
+   * The address, `127.0.0.1:<port>`, of a service that another target of this
+   * checkout and mode is running, such as its database. It fails the start if
+   * that service is not running, so a Worker never starts pointed at nothing.
+   */
+  readonly addressOf: (target: string, service: string) => Promise<string>
+}
+
+/**
+ * Runs Workers locally with Wrangler's Miniflare. Every config runs in one
+ * process, so their Queues, Durable Objects, R2 buckets, KV namespaces,
+ * Workflows and service bindings all see each other, and what they persist
+ * lives in the environment's data directory.
+ */
+export interface WorkerService {
+  readonly kind: 'worker'
+  /**
+   * Wrangler configs, as JSON files relative to the target. The first is the
+   * primary Worker, which answers on the service's port, and the rest are
+   * reached through its service bindings and the queues they consume.
+   */
+  readonly configs: readonly string[]
+  /**
+   * The bindings of one Worker, which Wrangler gets as its `.dev.vars`. They
+   * are the only variables and secrets a Worker sees: nothing is read from
+   * the shell's environment. Called for each Worker on every start.
+   */
+  readonly bindings?: (
+    context: WorkerBindingsContext
+  ) =>
+    | Readonly<Record<string, string>>
+    | Promise<Readonly<Record<string, string>>>
+  /** The path that answers below 400 on the primary Worker once it is usable. */
+  readonly readinessPath: string
+  readonly timeoutMs?: number
+  /** As for a process: the directories, relative to the target, holding the code the Workers run. */
+  readonly sources: readonly string[]
+}
+
 /** Named after its service in the target's compose.yaml. */
 export interface ComposeService {
   readonly kind: 'compose'
@@ -54,7 +96,7 @@ export interface ComposeService {
   readonly shared?: boolean
 }
 
-export type Service = ProcessService | ComposeService
+export type Service = ProcessService | WorkerService | ComposeService
 
 export interface SetupContext {
   readonly ports: Readonly<Record<string, number>>
