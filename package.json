@@ -73,7 +73,16 @@
     "oxlint": "1.91.0",
     "oxlint-tsgolint": "7.0.2005",
     "typescript": "7.0.2",
-    "vitest": "5.1.0"
+    "vitest": "5.1.0",
+    "wrangler": "^4.166.0"
+  },
+  "peerDependencies": {
+    "wrangler": "^4.0.0"
+  },
+  "peerDependenciesMeta": {
+    "wrangler": {
+      "optional": true
+    }
   },
   "engines": {
     "node": ">=22.17"

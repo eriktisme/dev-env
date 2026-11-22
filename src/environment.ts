@@ -25,7 +25,13 @@ import {
   testOverrideOf,
 } from './compose.ts'
 import { DevEnvError } from './errors.ts'
-import type { ProcessService, Service, Target } from './manifest.ts'
+import type {
+  CommandContext,
+  ProcessService,
+  Service,
+  Target,
+  WorkerService,
+} from './manifest.ts'
 import {
   availableTargets,
   loadTarget,
@@ -62,13 +68,18 @@ import {
   removeState,
   writeState,
 } from './state.ts'
+import {
+  prepareWorkers,
+  WORKER_ENVIRONMENT,
+  workerCommandOf,
+} from './worker.ts'
 
 const DEFAULT_TIMEOUT_MS = 120_000
 const LOG_LINES_ON_FAILURE = 20
 const UNALLOCATED_PORT = 0
 
 export interface ServiceInfo {
-  readonly kind: 'process' | 'compose'
+  readonly kind: 'process' | 'worker' | 'compose'
   readonly running: boolean
   readonly port: number
   readonly address: string
@@ -104,9 +115,9 @@ const needsDocker = (target: Target): boolean =>
 
 const processServicesOf = (
   target: Target
-): readonly (readonly [string, ProcessService])[] =>
+): readonly (readonly [string, ProcessService | WorkerService])[] =>
   Object.entries(target.manifest.services).flatMap(([name, service]) =>
-    service.kind === 'process' ? [[name, service] as const] : []
+    service.kind === 'compose' ? [] : [[name, service] as const]
   )
 
 /*
@@ -230,7 +241,7 @@ const allocatePorts = (
 
 const waitForProcessReady = async (
   name: string,
-  service: ProcessService,
+  service: ProcessService | WorkerService,
   port: number,
   isLive: () => Promise<boolean>,
   logPath: string
@@ -283,16 +294,24 @@ const startProcesses = async (
       state.mode
     )
     mkdirSync(dataDirectory, { recursive: true })
+    const context: CommandContext = {
+      environmentName: composeProjectOf(checkout, target.name, state.mode),
+      settings: state.settings ?? {},
+      port,
+      ports: state.ports,
+      dataDirectory,
+    }
     const started = await startProcess({
-      command: service.command({
-        environmentName: composeProjectOf(checkout, target.name, state.mode),
-        settings: state.settings ?? {},
-        port,
-        ports: state.ports,
-        dataDirectory,
-      }),
+      command:
+        service.kind === 'worker'
+          ? await workerCommandFor(checkout, target, service, context, state)
+          : service.command(context),
       directory: target.directory,
-      environment: { ...portVariablesOf(state.ports), PORT: String(port) },
+      environment: {
+        ...portVariablesOf(state.ports),
+        PORT: String(port),
+        ...(service.kind === 'worker' ? WORKER_ENVIRONMENT : {}),
+      },
       logPath,
     })
     state = {
@@ -316,6 +335,58 @@ const startProcesses = async (
   }
 
   return state
+}
+
+/*
+ * Another target's service, as this checkout runs it in the same mode. It
+ * is asked for by the target's own name, so a Worker is pointed at the
+ * database the checkout started and never at a guessed port.
+ */
+const addressOfRunning = async (
+  checkout: Checkout,
+  mode: Mode,
+  targetName: string,
+  service: string
+): Promise<string> => {
+  const info = await describe(
+    checkout,
+    await loadTarget(checkout.root, targetName),
+    mode
+  )
+  const found = info.services[service]
+  if (found === undefined || !found.running)
+    throw new DevEnvError(
+      `Service "${service}" of target "${targetName}" is not running. Start it first: \`dev-env start ${targetName}${isTestMode(mode) ? ' --test' : ''}\`.`
+    )
+  return found.address
+}
+
+const workerCommandFor = async (
+  checkout: Checkout,
+  target: Target,
+  service: WorkerService,
+  context: CommandContext,
+  state: EnvironmentState
+): Promise<readonly string[]> => {
+  const workDirectory = join(context.dataDirectory, 'workers')
+  const workers = await prepareWorkers({
+    service,
+    directory: target.directory,
+    workDirectory,
+    bindings: async (worker) =>
+      (await service.bindings?.({
+        ...context,
+        worker,
+        addressOf: (other, name) =>
+          addressOfRunning(checkout, state.mode, other, name),
+      })) ?? {},
+  })
+  return workerCommandOf({
+    directory: target.directory,
+    port: context.port,
+    persistDirectory: join(context.dataDirectory, 'state'),
+    workers,
+  })
 }
 
 const startSharedServices = async (
@@ -633,7 +704,7 @@ const describe = async (
       running: isRunning,
       port,
       address,
-      ...(service.kind === 'process' ? { url: `http://${address}` } : {}),
+      ...(service.kind === 'compose' ? {} : { url: `http://${address}` }),
     }
   }
 

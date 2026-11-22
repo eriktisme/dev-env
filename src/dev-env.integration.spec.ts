@@ -5,6 +5,7 @@ import {
   readFileSync,
   realpathSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from 'node:fs'
 import { createServer } from 'node:http'
@@ -244,6 +245,76 @@ const SHELL_WRAPPED_MANIFEST = `export default {
   },
 }
 `
+
+// A producer that queues a job and a consumer that stores it, in one worker service, so the queue between them is the same Miniflare's.
+const PRODUCER_WORKER = `export default {
+  async fetch(request, env) {
+    const url = new URL(request.url)
+    if (url.pathname === '/send') {
+      await env.JOBS.send({ id: url.searchParams.get('id') })
+      return new Response('queued')
+    }
+    if (url.pathname === '/stored') return env.CONSUMER.fetch(new Request('http://consumer/stored?id=' + url.searchParams.get('id')))
+    return new Response('producer ' + String(env.LEAKED_SECRET))
+  },
+}
+`
+
+// It records what it was bound to beside each job, to show what a Worker is handed.
+const CONSUMER_WORKER = `export default {
+  async queue(batch, env) {
+    for (const message of batch.messages) {
+      await env.STORE.put('job-' + message.body.id, env.DATABASE_ADDRESS + '|' + env.API_SECRET + '|' + String(env.LEAKED_SECRET))
+      message.ack()
+    }
+  },
+  async fetch(request, env) {
+    return new Response(String(await env.STORE.get('job-' + new URL(request.url).searchParams.get('id'))))
+  },
+}
+`
+
+const PRODUCER_CONFIG = JSON.stringify({
+  name: 'producer',
+  main: './producer.mjs',
+  compatibility_date: '2025-01-01',
+  queues: { producers: [{ binding: 'JOBS', queue: 'jobs' }] },
+  services: [{ binding: 'CONSUMER', service: 'consumer' }],
+})
+
+const CONSUMER_CONFIG = JSON.stringify({
+  name: 'consumer',
+  main: './consumer.mjs',
+  compatibility_date: '2025-01-01',
+  kv_namespaces: [{ binding: 'STORE', id: 'store' }],
+  queues: { consumers: [{ queue: 'jobs', max_batch_timeout: 1 }] },
+})
+
+const EDGE_MANIFEST = `export default {
+  services: {
+    edge: {
+      kind: 'worker',
+      configs: ['producer.json', 'consumer.json'],
+      readinessPath: '/',
+      sources: ['.'],
+      bindings: async ({ worker, addressOf }) =>
+        worker === 'consumer'
+          ? { DATABASE_ADDRESS: await addressOf('store', 'store'), API_SECRET: 'local-secret' }
+          : {},
+    },
+  },
+}
+`
+
+const EDGE = {
+  edge: {
+    'dev-env.ts': EDGE_MANIFEST,
+    'producer.json': PRODUCER_CONFIG,
+    'consumer.json': CONSUMER_CONFIG,
+    'producer.mjs': PRODUCER_WORKER,
+    'consumer.mjs': CONSUMER_WORKER,
+  },
+}
 
 type Files = Readonly<Record<string, string>>
 
@@ -945,6 +1016,88 @@ describe('process services', () => {
     expect(result.code).toBe(1)
     expect(result.stderr).toContain('Service "web" exited before it was ready')
     expect(result.stderr).toContain('boom')
+  })
+})
+
+describe('worker services', () => {
+  // Wrangler is the repository's own dependency, which a target resolves from its directory.
+  const WRANGLER = fileURLToPath(
+    new URL('../node_modules/wrangler', import.meta.url)
+  )
+
+  const createEdge = async (): Promise<string> => {
+    const root = await createWorkspace({ ...STORE, ...EDGE })
+    const modules = join(root, 'apps', 'edge', 'node_modules')
+    mkdirSync(modules)
+    symlinkSync(WRANGLER, join(modules, 'wrangler'))
+    return root
+  }
+
+  const storedJob = async (port: number, id: string): Promise<string> => {
+    for (let attempt = 0; attempt < 40; attempt++) {
+      const stored = await (await get(port, `/stored?id=${id}`)).text()
+      if (stored !== 'null') return stored
+      await sleep(500)
+    }
+    return 'never delivered'
+  }
+
+  it('delivers a queue message from one Worker to another, binds the checkout database and secrets, and reads nothing from the shell', async () => {
+    process.env.LEAKED_SECRET = 'from-the-shell'
+    const root = await createEdge()
+    expect((await cli(root, 'start', 'store')).code).toBe(0)
+    const database = `127.0.0.1:${await portOf(root, 'store', 'store')}`
+
+    const started = await cli(root, 'start', 'edge')
+    expect(started.code, started.stderr).toBe(0)
+    const port = await portOf(root, 'edge', 'edge')
+
+    expect(await (await get(port, '/')).text()).toBe('producer undefined')
+    expect(await (await get(port, '/send?id=1')).text()).toBe('queued')
+    expect(await storedJob(port, '1')).toBe(
+      `${database}|local-secret|undefined`
+    )
+
+    const { environments } = await info(root)
+    expect(
+      environments.find(({ target }) => target === 'edge')?.services.edge
+        ?.running
+    ).toBe(true)
+  })
+
+  it('keeps what the Workers persisted across stop and loses it on reset', async () => {
+    const root = await createEdge()
+    expect((await cli(root, 'start', 'store', 'edge')).code).toBe(0)
+    const port = await portOf(root, 'edge', 'edge')
+    await get(port, '/send?id=2')
+    expect(await storedJob(port, '2')).toContain('local-secret')
+
+    expect((await cli(root, 'stop', 'edge')).code).toBe(0)
+    await expect(get(port, '/')).rejects.toThrow()
+    expect((await cli(root, 'start', 'edge')).code).toBe(0)
+    expect(await portOf(root, 'edge', 'edge')).toBe(port)
+    expect(await (await get(port, '/stored?id=2')).text()).toContain(
+      'local-secret'
+    )
+
+    expect((await cli(root, 'reset', 'edge')).code).toBe(0)
+    expect((await cli(root, 'start', 'edge')).code).toBe(0)
+    expect(
+      await (
+        await get(await portOf(root, 'edge', 'edge'), '/stored?id=2')
+      ).text()
+    ).toBe('null')
+  })
+
+  it('refuses to start while the database it is bound to is not running', async () => {
+    const root = await createEdge()
+
+    const result = await cli(root, 'start', 'edge')
+
+    expect(result.code).toBe(1)
+    expect(result.stderr).toContain(
+      'Service "store" of target "store" is not running'
+    )
   })
 })
 

@@ -55,7 +55,7 @@ export const layoutOf = (
   repository,
   processes: new Map(
     Object.entries(manifest.services).flatMap(([name, service]) =>
-      service.kind === 'process' ? [[name, service.sources] as const] : []
+      service.kind === 'compose' ? [] : [[name, service.sources] as const]
     )
   ),
   packages: workspacePackagesOf(repository),
